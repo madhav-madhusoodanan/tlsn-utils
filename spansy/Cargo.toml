@@ -20,3 +20,4 @@ thiserror.workspace = true
 httparse = "1.8"
 pest = { version = "2.7" }
 pest_derive = { version = "2.7" }
+regex = "1.11.1"

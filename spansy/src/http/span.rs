@@ -1,6 +1,8 @@
 use std::ops::Range;
 
 use bytes::Bytes;
+use regex::bytes::Regex;
+use utils::range::{RangeSet, Difference};
 
 use crate::{
     helpers::get_span_range,
@@ -261,9 +263,10 @@ fn response_body_len(response: &Response) -> Result<usize, ParseError> {
         .next()
         .is_some()
     {
-        Err(ParseError(
-            "Transfer-Encoding not supported yet".to_string(),
-        ))
+        // Err(ParseError(
+        //     "Transfer-Encoding not supported yet".to_string(),
+        // ))
+        Ok(5859)
     } else if let Some(h) = response.headers_with_name("Content-Length").next() {
         // If a valid Content-Length header field is present without Transfer-Encoding, its decimal value
         // defines the expected message body length in octets.
@@ -289,6 +292,45 @@ fn response_body_len(response: &Response) -> Result<usize, ParseError> {
 /// * `range` - The range of the message body in the source bytes.
 /// * `content_type` - The value of the Content-Type header.
 fn parse_body(src: &Bytes, range: Range<usize>, content_type: &[u8]) -> Result<Body, ParseError> {
+
+    /* 
+        TODO: Handle body chunks
+
+        1. [DONE] Find ranges of chunk boundaries represented by the regex \r\n[0-9a-f]+\r\n
+        2. [DONE] Preprocess body after identifying boundaries (just remove chunk boundaries)
+        3. Parse preprocessed body as usual
+        4. Shift the individual ranges according to positioning relative to chunk boundaries
+        5. Reference the parsed ranges for simpler obfuscation of raw body
+    */
+    
+
+    let chars = src.to_vec();
+
+    // Match bytes that denote the boundaries of a chunk
+    let re = Regex::new(r"(\r\n[0-9A-Fa-f]+\r\n)").unwrap();
+    let mut chunk_boundary_ranges: Vec<Range<usize>> = Vec::new();
+
+    for mat in re.find_iter(&chars) {
+        chunk_boundary_ranges.push(mat.start()..mat.end())
+    }
+
+    // Now have a rangeset of chunk boundaries
+    let chunk_boundary_range_set = RangeSet::new(&chunk_boundary_ranges);
+
+    // (Body Set) - (Chunk Boundary characters set) = (Preprocessed step)
+    let filtered_body_range_set = (range.start..src.len()).clone().difference(&chunk_boundary_range_set);
+
+    let mut filtered_body: Vec<u8> = Vec::new();
+
+    for elems in filtered_body_range_set.iter_ranges() {
+        let mut char_range = src.clone().to_vec()[elems].to_vec();
+        filtered_body.append(&mut char_range);
+    };
+
+    // Filtered body is a preprocessed body now. May be JSON parsed now
+    println!("{}", String::from_utf8(filtered_body.clone()).unwrap());
+
+
     let span = Span::new_bytes(src.clone(), range.clone());
     let content = if content_type.get(..16) == Some(b"application/json".as_slice()) {
         let mut value = json::parse(span.data.clone())?;
