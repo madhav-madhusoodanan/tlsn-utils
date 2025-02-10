@@ -301,7 +301,7 @@ fn parse_body(src: &Bytes, range: Range<usize>, content_type: &[u8]) -> Result<B
 
         1. [DONE] Find ranges of chunk boundaries represented by the regex \r\n[0-9a-f]+\r\n
         2. [DONE] Preprocess body after identifying boundaries (just remove chunk boundaries)
-        3. Parse preprocessed body as usual
+        3. [DONE] Parse preprocessed body as usual (check if preprocessed_body contains header values also)
         4. Shift the individual ranges according to positioning relative to chunk boundaries
         5. Reference the parsed ranges for simpler obfuscation of raw body
     */
@@ -325,17 +325,21 @@ fn parse_body(src: &Bytes, range: Range<usize>, content_type: &[u8]) -> Result<B
 
     let mut filtered_body: Vec<u8> = Vec::new();
 
+    filtered_body.append(&mut chars[0..range.start].to_vec());
+
     for elems in filtered_body_range_set.iter_ranges() {
         let mut char_range = src.clone().to_vec()[elems].to_vec();
         filtered_body.append(&mut char_range);
     };
 
     // Filtered body is a preprocessed body now. May be JSON parsed now
-    println!("{}", String::from_utf8(filtered_body.clone()).unwrap());
+    let preprocessed_string = String::from_utf8(filtered_body.clone()).unwrap();
 
-    let span = Span::new_bytes(src.clone(), range.clone());
+    let span = Span::new_bytes(bytes::Bytes::copy_from_slice(preprocessed_string.as_bytes()), range.start..preprocessed_string.len());
     let content = if content_type.get(..16) == Some(b"application/json".as_slice()) {
         let mut value = json::parse(span.data.clone())?;
+        println!("parsed span: {:#?}", value);
+
         value.offset(range.start);
 
         BodyContent::Json(value)

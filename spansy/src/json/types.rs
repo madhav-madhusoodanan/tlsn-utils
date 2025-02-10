@@ -1,4 +1,4 @@
-use std::ops::{Index, Range};
+use std::{ops::{Index, Range}, marker::PhantomData};
 
 use utils::range::{Difference, RangeSet, ToRangeSet};
 
@@ -62,17 +62,55 @@ impl JsonValue {
     /// 2. If omission range is within value range, extend forward by omission range size
     /// 3. If omission range is after value range, do nothing
     pub fn check_rebase_offset(&mut self, src: &[u8], range: Range<usize>) {
+        let self_range_set = self.to_range_set();
+        let insert_pos = self_range_set.min().unwrap() - range.start;
+        let (first, second) = self.span().as_str().split_at(insert_pos);
+        let new_string = format!("{}{}{}", first, std::string::String::from_utf8(src[range.clone()].to_vec()).unwrap(), second);
+        let new_range = &[self_range_set.min().unwrap()..(self_range_set.max().unwrap() + range.end - range.start)];
+
         if range.start > self.to_range_set().max().unwrap() {return}
         else if range.end <= self.to_range_set().min().unwrap() {self.offset(range.end - range.start)}
         else {
             match self {
-            JsonValue::Number(v) => {
-                // Extend the right part of the range
-                // Add the omission characters to the appropriate location
-            },
-            _ => {}
-            
-        }
+                JsonValue::Number(v) => {
+                    // Extend the right part of the range
+                    // Add the omission characters to the appropriate location
+                    v.0 = Span {data: bytes::Bytes::from_owner(new_string), indices: RangeSet::new(new_range), _pd: PhantomData::default()}
+                },
+                JsonValue::String(v) => {
+                    // Extend the right part of the range
+                    // Add the omission characters to the appropriate location
+                    v.0 = Span {data: bytes::Bytes::from_owner(new_string), indices: RangeSet::new(new_range), _pd: PhantomData::default()}
+                },
+                JsonValue::Null(v) => {
+                    // Extend the right part of the range
+                    // Add the omission characters to the appropriate location
+                    v.0 = Span {data: bytes::Bytes::from_owner(new_string), indices: RangeSet::new(new_range), _pd: PhantomData::default()}
+                },
+                JsonValue::Bool(v) => {
+                    // Extend the right part of the range
+                    // Add the omission characters to the appropriate location
+                    v.0 = Span {data: bytes::Bytes::from_owner(new_string), indices: RangeSet::new(new_range), _pd: PhantomData::default()}
+                },
+                JsonValue::Array(v) => {
+                    // Extend the right part of the range
+                    // Add the omission characters to the appropriate location
+                    v.span = Span {data: bytes::Bytes::from_owner(new_string), indices: RangeSet::new(new_range), _pd: PhantomData::default()};
+                    for item in v.elems.iter_mut() {
+                        item.check_rebase_offset(src, range.clone())
+                    }
+                },
+                JsonValue::Object(v) => {
+                    // Extend the right part of the range
+                    // Add the omission characters to the appropriate location
+                    v.span = Span {data: bytes::Bytes::from_owner(new_string), indices: RangeSet::new(new_range), _pd: PhantomData::default()};
+                    
+                    // TODO: add update for object keys also
+                    for item in v.elems.iter_mut() {
+                        item.value.check_rebase_offset(src, range.clone())
+                    }
+                },
+            }
         }
     }
 }
