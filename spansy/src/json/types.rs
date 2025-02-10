@@ -56,6 +56,25 @@ impl JsonValue {
             }
         }
     }
+
+    /// Checks if a certain omission range is present, and takes actions
+    /// 1. If omission range is before value range, shift forward by omission range size
+    /// 2. If omission range is within value range, extend forward by omission range size
+    /// 3. If omission range is after value range, do nothing
+    pub fn check_rebase_offset(&mut self, src: &[u8], range: Range<usize>) {
+        if range.start > self.to_range_set().max().unwrap() {return}
+        else if range.end <= self.to_range_set().min().unwrap() {self.offset(range.end - range.start)}
+        else {
+            match self {
+            JsonValue::Number(v) => {
+                // Extend the right part of the range
+                // Add the omission characters to the appropriate location
+            },
+            _ => {}
+            
+        }
+        }
+    }
 }
 
 impl JsonValue {

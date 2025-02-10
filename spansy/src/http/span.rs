@@ -333,7 +333,6 @@ fn parse_body(src: &Bytes, range: Range<usize>, content_type: &[u8]) -> Result<B
     // Filtered body is a preprocessed body now. May be JSON parsed now
     println!("{}", String::from_utf8(filtered_body.clone()).unwrap());
 
-
     let span = Span::new_bytes(src.clone(), range.clone());
     let content = if content_type.get(..16) == Some(b"application/json".as_slice()) {
         let mut value = json::parse(span.data.clone())?;
