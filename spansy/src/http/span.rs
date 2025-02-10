@@ -168,7 +168,11 @@ pub(crate) fn parse_response_from_bytes(
         body: None,
     };
 
-    let body_len = response_body_len(&response)?;
+    // If it's a Transfer Encoding error, return the length of the response body
+    // This needs src, hence the calculation is done outside reasponse_body_len function
+    let body_len = response_body_len(&response).or_else(
+        |err| if err.0 == String::from("Transfer-Encoding not supported yet") { Ok(src.len() - head_end) } else { Err(err) }
+    ).expect("Could not properly calculate body length!");
 
     if body_len > 0 {
         let range = head_end..head_end + body_len;
@@ -263,10 +267,9 @@ fn response_body_len(response: &Response) -> Result<usize, ParseError> {
         .next()
         .is_some()
     {
-        // Err(ParseError(
-        //     "Transfer-Encoding not supported yet".to_string(),
-        // ))
-        Ok(5859)
+        Err(ParseError(
+            "Transfer-Encoding not supported yet".to_string(),
+        ))
     } else if let Some(h) = response.headers_with_name("Content-Length").next() {
         // If a valid Content-Length header field is present without Transfer-Encoding, its decimal value
         // defines the expected message body length in octets.
