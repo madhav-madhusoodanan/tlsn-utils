@@ -61,16 +61,24 @@ impl JsonValue {
     /// 1. If omission range is before value range, shift forward by omission range size
     /// 2. If omission range is within value range, extend forward by omission range size
     /// 3. If omission range is after value range, do nothing
+    /// 
+    /// `src` is the original body as sent/received in the TCP pipe.
+    /// `range` is the range of omission characters. 
+    /// 
+    /// Insert the omission characters at the range's
+    ///         start index of the preprocessed body to convert it to the original body 
     pub fn check_rebase_offset(&mut self, src: &[u8], range: Range<usize>) {
+        
         let self_range_set = self.to_range_set();
-        let insert_pos = self_range_set.min().unwrap() - range.start;
-        let (first, second) = self.span().as_str().split_at(insert_pos);
-        let new_string = format!("{}{}{}", first, std::string::String::from_utf8(src[range.clone()].to_vec()).unwrap(), second);
-        let new_range = &[self_range_set.min().unwrap()..(self_range_set.max().unwrap() + range.end - range.start)];
-
-        if range.start > self.to_range_set().max().unwrap() {return}
-        else if range.end <= self.to_range_set().min().unwrap() {self.offset(range.end - range.start)}
+        if range.start > self_range_set.max().unwrap() {return}
+        else if range.start <= self_range_set.min().unwrap() {self.offset(range.end - range.start)}
         else {
+            let insert_pos = range.start - self_range_set.min().unwrap();
+            println!("start: {}, self range min: {}, diff: {}", range.start, self_range_set.min().unwrap(), insert_pos);
+
+            let (first, second) = self.span().as_str().split_at(insert_pos);
+            let new_string = format!("{}{}{}", first, std::string::String::from_utf8(src[range.clone()].to_vec()).unwrap(), second);
+            let new_range = &[self_range_set.min().unwrap()..(self_range_set.max().unwrap() + range.end - range.start)];
             match self {
                 JsonValue::Number(v) => {
                     // Extend the right part of the range
@@ -105,8 +113,8 @@ impl JsonValue {
                     // Add the omission characters to the appropriate location
                     v.span = Span {data: bytes::Bytes::from_owner(new_string), indices: RangeSet::new(new_range), _pd: PhantomData::default()};
                     
-                    // TODO: add update for object keys also
                     for item in v.elems.iter_mut() {
+                        item.key.check_rebase_offset(src, range.clone());
                         item.value.check_rebase_offset(src, range.clone())
                     }
                 },
@@ -268,6 +276,31 @@ impl KeyValue {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 /// A key in a JSON object.
 pub struct JsonKey(pub(crate) Span<str>);
+
+impl JsonKey {
+    /// Checks if a certain omission range is present, and takes actions
+    /// 1. If omission range is before value range, shift forward by omission range size
+    /// 2. If omission range is within value range, extend forward by omission range size
+    /// 3. If omission range is after value range, do nothing
+    /// 
+    /// `src` is the original body as sent/received in the TCP pipe
+    /// `range` is the range of omission characters. Insert the omission characters at the range's
+    ///         start index of the preprocessed body to convert it to the original body 
+    pub fn check_rebase_offset(&mut self, src: &[u8], range: Range<usize>) {
+
+        if range.start > self.to_range_set().max().unwrap() {return}
+        else if range.end <= self.to_range_set().min().unwrap() {self.offset(range.end - range.start)}
+        else {
+                let self_range_set = self.to_range_set();
+                let insert_pos = range.start - self_range_set.min().unwrap();
+                let (first, second) = self.span().as_str().split_at(insert_pos);
+                let new_string = format!("{}{}{}", first, std::string::String::from_utf8(src[range.clone()].to_vec()).unwrap(), second);
+                let new_range = &[self_range_set.min().unwrap()..(self_range_set.max().unwrap() + range.end - range.start)];
+                self.0 = Span {data: bytes::Bytes::from_owner(new_string), indices: RangeSet::new(new_range), _pd: PhantomData::default()}
+        }
+    }
+}
+
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
