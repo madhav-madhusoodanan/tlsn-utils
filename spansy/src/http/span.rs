@@ -296,57 +296,61 @@ fn response_body_len(response: &Response) -> Result<usize, ParseError> {
 /// * `content_type` - The value of the Content-Type header.
 fn parse_body(src: &Bytes, range: Range<usize>, content_type: &[u8]) -> Result<Body, ParseError> {
 
-    /* 
-        TODO: Handle body chunks
-
-        1. [DONE] Find ranges of chunk boundaries represented by the regex \r\n[0-9a-f]+\r\n
-        2. [DONE] Preprocess body after identifying boundaries (just remove chunk boundaries)
-        3. [DONE] Parse preprocessed body as usual (check if preprocessed_body contains header values also)
-        4. Shift the individual ranges according to positioning relative to chunk boundaries
-        5. Reference the parsed ranges for simpler obfuscation of raw body
-    */
-    
-
     let chars = src.to_vec();
 
     // Match bytes that denote the boundaries of a chunk
-    let re = Regex::new(r"(\r\n[0-9A-Fa-f]+\r\n)").unwrap();
+    let re = Regex::new(r"\r\n[0-9A-Fa-f]+\r\n").unwrap();
     let mut chunk_boundary_ranges: Vec<Range<usize>> = Vec::new();
 
+    // Collecting the ranges of all the chunk boundary delimiter characters if present
     for mat in re.find_iter(&chars) {
         chunk_boundary_ranges.push(mat.start()..mat.end())
     }
 
-    // Now have a rangeset of chunk boundaries
+    // Now we have a range set of chunk boundaries
     let chunk_boundary_range_set = RangeSet::new(&chunk_boundary_ranges);
 
-    // (Body Set) - (Chunk Boundary characters set) = (Preprocessed step)
+    // (Body Set) - (Chunk Boundary characters set) = (Preprocessed string)
     let filtered_body_range_set = (range.start..src.len()).clone().difference(&chunk_boundary_range_set);
+
+    // For "Transfer-Encoding: chunked" body, chunk_boundary_range_set starts 2 characters before the header terminates
+    // Which means the end of the headers is represented by the delimiter phrase "\r\n\r\n"
+    // And chunk_boundary_range_set (if non-empty) starts here -----------------------^
+    // Hence to handle such cases here, the body is considered to start 2 characters before to allow for correct elimination of chunk boundary delimiter characters
+    //
+    // Non-"Transfer-Encoding" body must start as soon as header terminates for correct parsing, which is represented by `range.start`
+    let new_body_start = if (range.start - chunk_boundary_range_set.min().unwrap_or(0)) == 2 { range.start - 2 } else { range.start };
 
     let mut filtered_body: Vec<u8> = Vec::new();
 
-    filtered_body.append(&mut chars[0..range.start].to_vec());
+    filtered_body.append(&mut chars[0..new_body_start].to_vec());
 
+    // Accumulating all the chunk contents of the body, to obtain the cleaned version
     for elems in filtered_body_range_set.iter_ranges() {
         let mut char_range = src.clone().to_vec()[elems].to_vec();
         filtered_body.append(&mut char_range);
     };
 
-    // Filtered body is a preprocessed body now. May be JSON parsed now
+    // Preprocessed body is a preprocessed body. May be JSON parsed now.
     let untrimmed_string = String::from_utf8(filtered_body.clone()).unwrap();
     let preprocessed_string = untrimmed_string.trim_end();
     
-    
-    let span = Span::new_bytes(bytes::Bytes::copy_from_slice(preprocessed_string.as_bytes()), range.start..preprocessed_string.len());
+    let span = Span::new_bytes(bytes::Bytes::copy_from_slice(preprocessed_string.as_bytes()), new_body_start..preprocessed_string.len());
     let content = if content_type.get(..16) == Some(b"application/json".as_slice()) {
         let mut value = json::parse(span.data.clone())?;
         
-        value.offset(range.start);
+        // offset by the index that the body is considered to start in this function
+        value.offset(new_body_start);
         
-        for range in chunk_boundary_ranges.iter() {
-            value.check_rebase_offset(src, range.clone())
+        // Backfilling the chunk boundary delimiter characters and adjusting the range
+        // of each element in the JSON tree so that the range covered by a JsonValue/JsonKey is correct
+        // relative to `src`
+        //
+        // For non-"Transfer-Encoding: chunked" body, `chunk_boundary_ranges` is empty
+        // So the loop does not execute at all.
+        for delimiter_range in chunk_boundary_ranges.iter() {
+            value.check_rebase_offset(src, delimiter_range.clone())
         }
-        println!("preprocessed string: {:?}", value);
         
         BodyContent::Json(value)
     } else {
@@ -416,6 +420,12 @@ mod tests {
                         Content-Type: application/json\r\n\
                         Content-Length: 14\r\n\r\n\
                         {\"foo\": \"bar\"}";
+
+    const TEST_RESPONSE_TRANSFER_ENCODING_CHUNKED_JSON: &[u8] = b"\
+                        HTTP/1.1 200 OK\r\n\
+                        Content-Type: application/json\r\n\
+                        Transfer-Encoding: chunked\r\n\r\n\
+                        3\r\n{\"f\r\n7\r\noo\": \"b\r\n27\r\nar\", \"baz\": [1, 2, 3, 4, nu\r\n14\r\nll, \"string\"]}\r\n0\r\n";
 
     #[test]
     fn test_parse_request() {
@@ -549,5 +559,25 @@ mod tests {
         };
 
         assert_eq!(value.span(), "{\"foo\": \"bar\"}");
+    }
+
+    #[test]
+    fn test_parse_response_transfer_encoding_chunked_json() {
+        let res = parse_response(TEST_RESPONSE_TRANSFER_ENCODING_CHUNKED_JSON).unwrap();
+
+        let BodyContent::Json(value) = res.body.unwrap().content else {
+            panic!("body is not json");
+        };
+
+        // The span of the element now references the original tcp stream
+        assert_eq!(value.span(), "{\"f\r\n7\r\noo\": \"b\r\n27\r\nar\", \"baz\": [1, 2, 3, 4, nu\r\n14\r\nll, \"string\"]}");
+        if let json::JsonValue::Object(baz_value) = value {
+            assert_eq!(baz_value.elems[0].key.span().as_str(), "f\r\n7\r\noo");
+            assert_eq!(baz_value.elems[0].value.span(), "b\r\n27\r\nar");
+            assert_eq!(baz_value.elems[1].key.span(), "baz");
+            assert_eq!(baz_value.elems[1].value.span(), "[1, 2, 3, 4, nu\r\n14\r\nll, \"string\"]");
+        } else {
+            panic!("Could not parse the JSON body as an object!");
+        };
     }
 }

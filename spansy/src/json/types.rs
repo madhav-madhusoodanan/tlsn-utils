@@ -57,16 +57,16 @@ impl JsonValue {
         }
     }
 
-    /// Checks if a certain omission range is present, and takes actions
-    /// 1. If omission range is before value range, shift forward by omission range size
-    /// 2. If omission range is within value range, extend forward by omission range size
-    /// 3. If omission range is after value range, do nothing
+    /// Checks if a certain delimiter range is present, and takes actions
+    /// 1. If delimiter range is before value range, shift self's range forward by delimiter range size
+    /// 2. If delimiter range is within value range, extend self's range forward by delimiter range size
+    /// 3. If delimiter range is after value range, do nothing
     /// 
     /// `src` is the original body as sent/received in the TCP pipe.
     /// `range` is the range of omission characters. 
     /// 
     /// Insert the omission characters at the range's
-    ///         start index of the preprocessed body to convert it to the original body 
+    /// `start` index of the preprocessed body to convert it to the original body 
     pub fn check_rebase_offset(&mut self, src: &[u8], range: Range<usize>) {
         
         let self_range_set = self.to_range_set();
@@ -74,7 +74,6 @@ impl JsonValue {
         else if range.start <= self_range_set.min().unwrap() {self.offset(range.end - range.start)}
         else {
             let insert_pos = range.start - self_range_set.min().unwrap();
-            println!("start: {}, self range min: {}, diff: {}", range.start, self_range_set.min().unwrap(), insert_pos);
 
             let (first, second) = self.span().as_str().split_at(insert_pos);
             let new_string = format!("{}{}{}", first, std::string::String::from_utf8(src[range.clone()].to_vec()).unwrap(), second);
@@ -82,35 +81,26 @@ impl JsonValue {
             match self {
                 JsonValue::Number(v) => {
                     // Extend the right part of the range
-                    // Add the omission characters to the appropriate location
+                    // Add the delimiter characters to the appropriate location
                     v.0 = Span {data: bytes::Bytes::from_owner(new_string), indices: RangeSet::new(new_range), _pd: PhantomData::default()}
                 },
                 JsonValue::String(v) => {
-                    // Extend the right part of the range
-                    // Add the omission characters to the appropriate location
                     v.0 = Span {data: bytes::Bytes::from_owner(new_string), indices: RangeSet::new(new_range), _pd: PhantomData::default()}
                 },
                 JsonValue::Null(v) => {
-                    // Extend the right part of the range
-                    // Add the omission characters to the appropriate location
                     v.0 = Span {data: bytes::Bytes::from_owner(new_string), indices: RangeSet::new(new_range), _pd: PhantomData::default()}
                 },
                 JsonValue::Bool(v) => {
-                    // Extend the right part of the range
-                    // Add the omission characters to the appropriate location
                     v.0 = Span {data: bytes::Bytes::from_owner(new_string), indices: RangeSet::new(new_range), _pd: PhantomData::default()}
                 },
                 JsonValue::Array(v) => {
-                    // Extend the right part of the range
-                    // Add the omission characters to the appropriate location
                     v.span = Span {data: bytes::Bytes::from_owner(new_string), indices: RangeSet::new(new_range), _pd: PhantomData::default()};
                     for item in v.elems.iter_mut() {
                         item.check_rebase_offset(src, range.clone())
                     }
                 },
                 JsonValue::Object(v) => {
-                    // Extend the right part of the range
-                    // Add the omission characters to the appropriate location
+                    // Perform the operation for the child elements too
                     v.span = Span {data: bytes::Bytes::from_owner(new_string), indices: RangeSet::new(new_range), _pd: PhantomData::default()};
                     
                     for item in v.elems.iter_mut() {
@@ -278,18 +268,20 @@ impl KeyValue {
 pub struct JsonKey(pub(crate) Span<str>);
 
 impl JsonKey {
-    /// Checks if a certain omission range is present, and takes actions
-    /// 1. If omission range is before value range, shift forward by omission range size
-    /// 2. If omission range is within value range, extend forward by omission range size
-    /// 3. If omission range is after value range, do nothing
+    /// Checks if a certain delimiter range is present, and takes actions
+    /// 1. If delimiter range is before value range, shift self's range forward by delimiter range size
+    /// 2. If delimiter range is within value range, extend self's range forward by delimiter range size
+    /// 3. If delimiter range is after value range, do nothing
     /// 
-    /// `src` is the original body as sent/received in the TCP pipe
-    /// `range` is the range of omission characters. Insert the omission characters at the range's
-    ///         start index of the preprocessed body to convert it to the original body 
+    /// `src` is the original body as sent/received in the TCP pipe.
+    /// `range` is the range of omission characters. 
+    /// 
+    /// Insert the omission characters at the range's
+    /// `start` index of the preprocessed body to convert it to the original body 
     pub fn check_rebase_offset(&mut self, src: &[u8], range: Range<usize>) {
 
         if range.start > self.to_range_set().max().unwrap() {return}
-        else if range.end <= self.to_range_set().min().unwrap() {self.offset(range.end - range.start)}
+        else if range.start <= self.to_range_set().min().unwrap() {self.offset(range.end - range.start)}
         else {
                 let self_range_set = self.to_range_set();
                 let insert_pos = range.start - self_range_set.min().unwrap();
