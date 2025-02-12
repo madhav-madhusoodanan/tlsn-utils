@@ -570,6 +570,8 @@ mod tests {
         };
 
         // The span of the element now references the original tcp stream
+        // The cleaned body goes like: 
+        // {\"foo\": \"bar\", \"baz\": [1, 2, 3, 4, null, \"string\"]}
         assert_eq!(value.span(), "{\"f\r\n7\r\noo\": \"b\r\n27\r\nar\", \"baz\": [1, 2, 3, 4, nu\r\n14\r\nll, \"string\"]}");
         if let json::JsonValue::Object(baz_value) = value {
             assert_eq!(baz_value.elems[0].key.span().as_str(), "f\r\n7\r\noo");
